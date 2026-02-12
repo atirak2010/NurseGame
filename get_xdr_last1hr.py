@@ -1,0 +1,340 @@
+import requests
+import json
+from collections import Counter
+from datetime import datetime, timezone, timedelta
+
+# Configuration
+XDR_API_URL = "https://api-csoc-plm.xdr.sg.paloaltonetworks.com"
+API_KEY = "mYKcmCANq1jsnUcyUIOwn13wi6NqKH4QLeq46YxhvHYgvqp719dJa1kTl23yZ2WUyE7Y5AJb5HeyPdHSyL5fgFZte5a2dmFNzRBbt5J0DEfxiFiHiKdzkcwEplaGI7na"
+API_KEY_ID = "11"
+
+
+def get_xdr_headers():
+    return {
+        "x-xdr-auth-id": API_KEY_ID,
+        "Authorization": API_KEY,
+        "Content-Type": "application/json",
+    }
+
+
+def fmt(epoch_ms):
+    if epoch_ms:
+        return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return "N/A"
+
+
+def get_incidents_last_hour():
+    """Fetch all incidents from the last 1 hour with pagination."""
+    now = datetime.now(timezone.utc)
+    one_hour_ago = now - timedelta(hours=1)
+    ts_from = int(one_hour_ago.timestamp() * 1000)
+    ts_to = int(now.timestamp() * 1000)
+
+    print(f"  Time window: {fmt(ts_from)} -> {fmt(ts_to)}")
+
+    all_incidents = []
+    offset = 0
+    page_size = 100
+    total_count = None
+
+    while True:
+        body = {
+            "request_data": {
+                "filters": [
+                    {
+                        "field": "creation_time",
+                        "operator": "gte",
+                        "value": ts_from,
+                    },
+                    {
+                        "field": "creation_time",
+                        "operator": "lte",
+                        "value": ts_to,
+                    },
+                ],
+                "search_from": offset,
+                "search_to": offset + page_size,
+                "sort": {"field": "creation_time", "keyword": "desc"},
+            }
+        }
+
+        resp = requests.post(
+            f"{XDR_API_URL}/public_api/v1/incidents/get_incidents",
+            headers=get_xdr_headers(),
+            json=body,
+        )
+
+        if resp.status_code != 200:
+            print(f"  Error: HTTP {resp.status_code} - {resp.text}")
+            return None
+
+        data = resp.json()
+        incidents = data.get("reply", {}).get("incidents", [])
+        if total_count is None:
+            total_count = data.get("reply", {}).get("total_count", 0)
+
+        all_incidents.extend(incidents)
+        print(f"  Page {offset // page_size + 1}: fetched {len(incidents)} (total so far: {len(all_incidents)} / {total_count})")
+
+        if len(incidents) < page_size:
+            break
+        offset += page_size
+
+    return {"incidents": all_incidents, "total_count": total_count}
+
+
+def get_incident_extra_data(incident_id):
+    body = {
+        "request_data": {
+            "incident_id": str(incident_id),
+            "alerts_limit": 50,
+        }
+    }
+    resp = requests.post(
+        f"{XDR_API_URL}/public_api/v1/incidents/get_incident_extra_data",
+        headers=get_xdr_headers(),
+        json=body,
+    )
+    if resp.status_code != 200:
+        return None
+    return resp.json().get("reply")
+
+
+if __name__ == "__main__":
+    print("=" * 100)
+    print("CORTEX XDR - LAST 1 HOUR INCIDENT ANALYSIS")
+    print("=" * 100)
+    print(f"Run time: {fmt(int(datetime.now(timezone.utc).timestamp() * 1000))}")
+    print()
+
+    # --- Step 1: Fetch incidents ---
+    print("[1/3] Fetching incidents from the last 1 hour...")
+    result = get_incidents_last_hour()
+
+    if not result:
+        print("Failed to fetch incidents.")
+        exit(1)
+
+    incidents = result["incidents"]
+    total = result["total_count"]
+    print(f"\n  Total incidents in last 1 hour: {total}")
+    print(f"  Retrieved: {len(incidents)}")
+
+    if not incidents:
+        print("\n  No incidents in the last hour.")
+        exit(0)
+
+    # Save raw
+    with open("incidents_1hr_raw.json", "w") as f:
+        json.dump(incidents, f, indent=2)
+
+    # --- Step 2: Fetch detailed data ---
+    print(f"\n[2/3] Fetching detailed extra data for {len(incidents)} incidents...")
+    detailed = []
+    for idx, inc in enumerate(incidents, 1):
+        iid = inc.get("incident_id")
+        print(f"  [{idx}/{len(incidents)}] Incident {iid}...", end=" ")
+        d = get_incident_extra_data(iid)
+        if d:
+            detailed.append(d)
+            print("OK")
+        else:
+            print("FAILED")
+
+    with open("incidents_1hr_detailed.json", "w") as f:
+        json.dump(detailed, f, indent=2)
+
+    # --- Step 3: Analysis ---
+    print(f"\n[3/3] Analyzing {len(incidents)} incidents...\n")
+    print("=" * 100)
+    print("INCIDENT OVERVIEW")
+    print("=" * 100)
+
+    # Basic stats
+    severities = Counter(i.get("severity", "unknown") for i in incidents)
+    statuses = Counter(i.get("status", "unknown") for i in incidents)
+    sources = Counter(s for i in incidents for s in i.get("incident_sources", []))
+
+    alert_names = Counter()
+    for i in incidents:
+        desc = i.get("description", "")
+        name = desc.split("generated by")[0].strip().strip("'") if "generated by" in desc else desc
+        alert_names[name] += 1
+
+    host_set = set()
+    for i in incidents:
+        for h in i.get("hosts", []):
+            host_set.add(h)
+
+    print(f"\n  Total Incidents    : {len(incidents)}")
+    print(f"  Unique Hosts/IPs   : {len(host_set)}")
+    print(f"  Time Range         : {fmt(incidents[-1].get('creation_time'))} -> {fmt(incidents[0].get('creation_time'))}")
+
+    print(f"\n--- Severity ---")
+    for sev in ["critical", "high", "medium", "low", "informational"]:
+        if sev in severities:
+            pct = severities[sev] / len(incidents) * 100
+            bar = "#" * int(pct / 2)
+            print(f"  {sev:<14}: {severities[sev]:>4} ({pct:5.1f}%)  {bar}")
+
+    print(f"\n--- Status ---")
+    for status, count in statuses.most_common():
+        print(f"  {status:<30}: {count:>4} ({count / len(incidents) * 100:5.1f}%)")
+
+    print(f"\n--- Incident Sources ---")
+    for src, count in sources.most_common():
+        print(f"  {src:<30}: {count:>4}")
+
+    print(f"\n--- Top Alert Types ---")
+    for name, count in alert_names.most_common(20):
+        print(f"  {count:>4}x  {name}")
+
+    # --- Detailed alert analysis ---
+    print("\n" + "=" * 100)
+    print("DETAILED ALERT ANALYSIS")
+    print("=" * 100)
+
+    all_alerts = []
+    for d in detailed:
+        alerts = d.get("alerts", {}).get("data", [])
+        all_alerts.extend(alerts)
+
+    print(f"\n  Total alerts across all incidents: {len(all_alerts)}")
+
+    actions = Counter(a.get("action_pretty", a.get("action", "unknown")) for a in all_alerts)
+    categories = Counter(a.get("category", "unknown") for a in all_alerts)
+    tactics = Counter(a.get("mitre_tactic_id_and_name") for a in all_alerts if a.get("mitre_tactic_id_and_name"))
+    techniques = Counter(a.get("mitre_technique_id_and_name") for a in all_alerts if a.get("mitre_technique_id_and_name"))
+
+    print(f"\n--- Alert Actions ---")
+    for action, count in actions.most_common():
+        blocked = "BLOCKED" if "Prevented" in action or "Blocked" in action else "DETECT"
+        print(f"  [{blocked:>7}] {action:<60}: {count:>4}")
+
+    detected_only = [a for a in all_alerts
+                     if "Detected" in a.get("action_pretty", "") or "Allowed" in a.get("action_pretty", "")]
+    if detected_only:
+        print(f"\n  *** WARNING: {len(detected_only)} alerts were DETECTED but NOT BLOCKED ***")
+        print(f"  These require immediate investigation:")
+        for a in detected_only:
+            print(f"    - Alert {a.get('alert_id')}: {a.get('name')} | Host: {a.get('host_ip')} | "
+                  f"Action: {a.get('action_pretty')} | Severity: {a.get('severity')}")
+
+    print(f"\n--- Alert Categories ---")
+    for cat, count in categories.most_common():
+        print(f"  {cat:<40}: {count:>4}")
+
+    if tactics:
+        print(f"\n--- MITRE ATT&CK Tactics ---")
+        for t, count in tactics.most_common():
+            print(f"  {count:>4}x  {t}")
+    else:
+        print(f"\n--- MITRE ATT&CK Tactics ---")
+        print("  None mapped")
+
+    if techniques:
+        print(f"\n--- MITRE ATT&CK Techniques ---")
+        for t, count in techniques.most_common():
+            print(f"  {count:>4}x  {t}")
+
+    # --- Network analysis ---
+    print("\n" + "=" * 100)
+    print("NETWORK ANALYSIS")
+    print("=" * 100)
+
+    ext_hosts = Counter(a.get("action_external_hostname") for a in all_alerts if a.get("action_external_hostname"))
+    remote_ips = Counter(a.get("action_remote_ip") for a in all_alerts if a.get("action_remote_ip"))
+    local_ips = Counter(a.get("action_local_ip") for a in all_alerts if a.get("action_local_ip"))
+    remote_ports = Counter(a.get("action_remote_port") for a in all_alerts if a.get("action_remote_port"))
+
+    net_countries = Counter()
+    net_ips = Counter()
+    for d in detailed:
+        for art in d.get("network_artifacts", {}).get("data", []):
+            c = art.get("network_country")
+            if c:
+                net_countries[c] += 1
+            ip = art.get("network_remote_ip")
+            if ip:
+                net_ips[ip] += 1
+
+    print(f"\n--- Top External Hostnames (Attackers) ---")
+    for h, count in ext_hosts.most_common(20):
+        print(f"  {count:>4}x  {h}")
+
+    print(f"\n--- Top Remote IPs (Targets) ---")
+    for ip, count in remote_ips.most_common(20):
+        print(f"  {count:>4}x  {ip}")
+
+    print(f"\n--- Top Local IPs ---")
+    for ip, count in local_ips.most_common(20):
+        print(f"  {count:>4}x  {ip}")
+
+    print(f"\n--- Target Ports ---")
+    for port, count in remote_ports.most_common(10):
+        print(f"  {count:>4}x  port {port}")
+
+    print(f"\n--- Source Countries ---")
+    for c, count in net_countries.most_common():
+        print(f"  {c:<6}: {count:>4}")
+
+    # --- File artifacts ---
+    print("\n" + "=" * 100)
+    print("FILE ARTIFACTS")
+    print("=" * 100)
+
+    all_file_arts = []
+    for d in detailed:
+        arts = d.get("file_artifacts", {}).get("data", [])
+        all_file_arts.extend(arts)
+
+    if all_file_arts:
+        print(f"\n  Total file artifacts: {len(all_file_arts)}")
+        verdicts = Counter(a.get("file_wildfire_verdict", "unknown") for a in all_file_arts)
+        print(f"\n--- Wildfire Verdicts ---")
+        for v, count in verdicts.most_common():
+            print(f"  {v:<20}: {count:>4}")
+
+        print(f"\n--- Files ---")
+        for a in all_file_arts:
+            print(f"  Name: {a.get('file_name', 'N/A')} | SHA256: {a.get('file_sha256', 'N/A')[:32]}... | "
+                  f"Verdict: {a.get('file_wildfire_verdict', 'N/A')}")
+    else:
+        print("\n  No file artifacts found.")
+
+    # --- High severity incident details ---
+    high_incidents = [i for i in incidents if i.get("severity") in ("high", "critical")]
+    if high_incidents:
+        print("\n" + "=" * 100)
+        print(f"HIGH/CRITICAL SEVERITY INCIDENTS ({len(high_incidents)})")
+        print("=" * 100)
+        for i in high_incidents:
+            desc = i.get("description", "N/A")
+            print(f"\n  ID: {i.get('incident_id')} | Severity: {i.get('severity')} | Status: {i.get('status')}")
+            print(f"  Created : {fmt(i.get('creation_time'))}")
+            print(f"  Desc    : {desc}")
+            print(f"  Hosts   : {', '.join(i.get('hosts', [])) if i.get('hosts') else 'N/A'}")
+            print(f"  Source  : {', '.join(i.get('incident_sources', []))}")
+            print(f"  Alerts  : {i.get('alert_count', 0)} (High: {i.get('high_severity_alert_count', 0)})")
+            print(f"  XDR URL : {i.get('xdr_url', 'N/A')}")
+
+    # --- Summary ---
+    print("\n" + "=" * 100)
+    print("EXECUTIVE SUMMARY")
+    print("=" * 100)
+    total_blocked = sum(c for a, c in actions.items() if "Prevented" in a or "Blocked" in a)
+    total_detected = sum(c for a, c in actions.items() if "Detected" in a or "Allowed" in a)
+    print(f"""
+  Incidents (last 1 hr)  : {len(incidents)}
+  Total Alerts           : {len(all_alerts)}
+  Blocked                : {total_blocked}
+  Detected (not blocked) : {total_detected}
+  High/Critical          : {len(high_incidents)}
+  Unique Hosts           : {len(host_set)}
+  Top Threat             : {alert_names.most_common(1)[0][0] if alert_names else 'N/A'} ({alert_names.most_common(1)[0][1] if alert_names else 0}x)
+  Top Source Country     : {net_countries.most_common(1)[0][0] if net_countries else 'N/A'} ({net_countries.most_common(1)[0][1] if net_countries else 0}x)
+""")
+
+    print(f"Files saved:")
+    print(f"  - incidents_1hr_raw.json       (basic incident data)")
+    print(f"  - incidents_1hr_detailed.json   (full extra data with alerts & artifacts)")
