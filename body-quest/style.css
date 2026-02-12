@@ -6,22 +6,22 @@
 :root {
   --primary: #6c5ce7;
   --primary-dark: #5a4bd1;
-  --secondary: #00b894;
+  --secondary: #00a884;
   --accent: #e17055;
-  --bg-dark: #0a0a1a;
-  --bg-card: #1a1a2e;
-  --bg-surface: #16213e;
-  --text-primary: #ffffff;
-  --text-secondary: #a0a0c0;
-  --text-muted: #6c6c8a;
-  --border: #2a2a4a;
+  --bg-dark: #f0f2f7;
+  --bg-card: #ffffff;
+  --bg-surface: #f7f8fc;
+  --text-primary: #1a1a2e;
+  --text-secondary: #5a5a7a;
+  --text-muted: #9a9ab0;
+  --border: #dfe1e8;
   --success: #00b894;
   --danger: #e74c3c;
-  --warning: #fdcb6e;
+  --warning: #e6a817;
   --radius: 12px;
   --radius-lg: 20px;
-  --shadow: 0 8px 32px rgba(0,0,0,0.3);
-  --shadow-glow: 0 0 20px rgba(108,92,231,0.3);
+  --shadow: 0 4px 20px rgba(0,0,0,0.08);
+  --shadow-glow: 0 0 16px rgba(108,92,231,0.18);
   /* Safe areas for notch devices */
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -59,8 +59,8 @@ body {
   height: 100%;
   overflow: hidden;
   background-image:
-    radial-gradient(circle at 20% 50%, rgba(108,92,231,0.08) 0%, transparent 50%),
-    radial-gradient(circle at 80% 20%, rgba(0,184,148,0.08) 0%, transparent 50%);
+    radial-gradient(circle at 20% 50%, rgba(108,92,231,0.06) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(0,184,148,0.06) 0%, transparent 50%);
   /* Prevent text selection during gameplay */
   -webkit-user-select: none;
   user-select: none;
@@ -526,9 +526,9 @@ body {
 }
 
 .body-part {
-  fill: rgba(108,92,231,0.1);
-  stroke: rgba(108,92,231,0.3);
-  stroke-width: 1;
+  fill: rgba(108,92,231,0.08);
+  stroke: rgba(108,92,231,0.35);
+  stroke-width: 1.2;
 }
 
 .drop-zones { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
@@ -537,7 +537,7 @@ body {
   position: absolute;
   width: 46px;
   height: 46px;
-  border: 2px dashed rgba(255,255,255,0.25);
+  border: 2px dashed rgba(108,92,231,0.35);
   border-radius: 50%;
   transform: translate(-50%, -50%);
   display: flex;
@@ -565,8 +565,8 @@ body {
   animation: dropHint 1s infinite;
 }
 @keyframes dropHint {
-  0%, 100% { border-color: rgba(255,255,255,0.25); transform: translate(-50%, -50%) scale(1); }
-  50% { border-color: var(--primary); transform: translate(-50%, -50%) scale(1.1); box-shadow: 0 0 12px rgba(108,92,231,0.4); }
+  0%, 100% { border-color: rgba(108,92,231,0.35); transform: translate(-50%, -50%) scale(1); }
+  50% { border-color: var(--primary); transform: translate(-50%, -50%) scale(1.1); box-shadow: 0 0 12px rgba(108,92,231,0.3); }
 }
 
 .body-drop-zone.filled {
@@ -913,10 +913,11 @@ body {
 .card-funfact {
   margin-top: 8px;
   padding: 10px;
-  background: rgba(253,203,110,0.1);
+  background: rgba(230,168,23,0.08);
+  border: 1px solid rgba(230,168,23,0.15);
   border-radius: 8px;
   font-size: 12px;
-  color: var(--warning);
+  color: #b38600;
   line-height: 1.5;
 }
 
@@ -983,8 +984,8 @@ body {
 }
 
 .results-funfact {
-  background: rgba(253,203,110,0.1);
-  border: 1px solid rgba(253,203,110,0.2);
+  background: rgba(230,168,23,0.08);
+  border: 1px solid rgba(230,168,23,0.15);
   border-radius: var(--radius);
   padding: 14px;
   margin-bottom: 20px;
@@ -1031,7 +1032,7 @@ body {
 .modal-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0,0,0,0.7);
+  background: rgba(0,0,0,0.35);
   backdrop-filter: blur(5px);
   -webkit-backdrop-filter: blur(5px);
 }
@@ -1086,11 +1087,12 @@ body {
 }
 
 .modal-card-fact {
-  background: rgba(253,203,110,0.1);
+  background: rgba(230,168,23,0.08);
+  border: 1px solid rgba(230,168,23,0.15);
   border-radius: 8px;
   padding: 12px;
   font-size: 13px;
-  color: var(--warning);
+  color: #b38600;
   line-height: 1.5;
   margin-bottom: 16px;
 }
@@ -1144,7 +1146,7 @@ body {
 .toast.success { border-left: 4px solid var(--success); }
 .toast.error   { border-left: 4px solid var(--danger); }
 .toast.info    { border-left: 4px solid var(--primary); }
-.toast.achievement { border-left: 4px solid var(--warning); background: rgba(253,203,110,0.1); }
+.toast.achievement { border-left: 4px solid var(--warning); background: rgba(230,168,23,0.08); }
 
 @keyframes toastIn {
   from { transform: translateY(20px); opacity: 0; }
@@ -1463,18 +1465,18 @@ body {
 /* ========== SVG GUIDE LINES ========== */
 .body-guide {
   fill: none;
-  stroke: rgba(108,92,231,0.15);
+  stroke: rgba(108,92,231,0.2);
   stroke-width: 0.8;
 }
 
 .body-guide-dash {
-  stroke: rgba(108,92,231,0.2);
+  stroke: rgba(108,92,231,0.25);
   stroke-width: 0.8;
   stroke-dasharray: 4 3;
 }
 
 .body-guide-center {
-  stroke: rgba(108,92,231,0.08);
+  stroke: rgba(108,92,231,0.12);
   stroke-width: 0.5;
   stroke-dasharray: 2 4;
 }
