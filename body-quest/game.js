@@ -238,6 +238,84 @@ function showToast(message, type = 'info') {
   setTimeout(() => toast.remove(), 3000);
 }
 
+// ---------- ANIMATIONS ----------
+function spawnConfetti(targetEl, count = 8) {
+  const rect = targetEl ? targetEl.getBoundingClientRect() : { left: window.innerWidth / 2, top: window.innerHeight / 2 };
+  const colors = ['#6c5ce7', '#00b894', '#fdcb6e', '#e17055', '#74b9ff', '#a29bfe'];
+  for (let i = 0; i < count; i++) {
+    const confetti = document.createElement('div');
+    const size = Math.random() * 8 + 4;
+    confetti.style.cssText = `
+      position:fixed; z-index:9999; pointer-events:none;
+      width:${size}px; height:${size}px;
+      background:${colors[Math.floor(Math.random() * colors.length)]};
+      border-radius:${Math.random() > 0.5 ? '50%' : '2px'};
+      left:${rect.left + Math.random() * 60 - 30}px;
+      top:${rect.top + Math.random() * 20 - 10}px;
+      animation: confettiPop ${0.6 + Math.random() * 0.4}s cubic-bezier(0.25,0.46,0.45,0.94) forwards;
+      animation-delay: ${Math.random() * 0.1}s;
+    `;
+    document.body.appendChild(confetti);
+    setTimeout(() => confetti.remove(), 1200);
+  }
+}
+
+function animateScore(element) {
+  element.style.animation = 'none';
+  element.offsetHeight; // trigger reflow
+  element.style.animation = 'scorePop 0.4s ease';
+}
+
+function animateStreak(element) {
+  element.classList.add('on-fire');
+  setTimeout(() => element.classList.remove('on-fire'), 600);
+}
+
+// Add confetti keyframes dynamically
+(function addConfettiStyle() {
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes confettiPop {
+      0%   { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 1; }
+      100% { transform: translate(${Math.random() > 0.5 ? '' : '-'}${30 + Math.random() * 50}px, -${60 + Math.random() * 80}px) rotate(${360 + Math.random() * 360}deg) scale(0); opacity: 0; }
+    }
+  `;
+  document.head.appendChild(style);
+  // Add multiple variants
+  for (let i = 0; i < 6; i++) {
+    const s = document.createElement('style');
+    const dx = (Math.random() - 0.5) * 120;
+    const dy = -(40 + Math.random() * 100);
+    s.textContent = `
+      @keyframes confettiPop${i} {
+        0%   { transform: translate(0,0) rotate(0) scale(1); opacity:1; }
+        100% { transform: translate(${dx}px,${dy}px) rotate(${360 + Math.random()*720}deg) scale(0); opacity:0; }
+      }
+    `;
+    document.head.appendChild(s);
+  }
+})();
+
+function spawnConfettiAdvanced(x, y, count = 12) {
+  const colors = ['#6c5ce7','#00b894','#fdcb6e','#e17055','#74b9ff','#ff6b6b','#a29bfe','#55efc4'];
+  for (let i = 0; i < count; i++) {
+    const confetti = document.createElement('div');
+    const size = Math.random() * 8 + 4;
+    const variant = Math.floor(Math.random() * 6);
+    confetti.style.cssText = `
+      position:fixed; z-index:9999; pointer-events:none;
+      width:${size}px; height:${size}px;
+      background:${colors[Math.floor(Math.random() * colors.length)]};
+      border-radius:${Math.random() > 0.5 ? '50%' : '2px'};
+      left:${x + Math.random() * 20 - 10}px;
+      top:${y}px;
+      animation: confettiPop${variant} ${0.5 + Math.random() * 0.5}s cubic-bezier(0.25,0.46,0.45,0.94) forwards;
+    `;
+    document.body.appendChild(confetti);
+    setTimeout(() => confetti.remove(), 1200);
+  }
+}
+
 function collectCards(cardIds) {
   let newCards = [];
   cardIds.forEach(id => {
@@ -450,6 +528,15 @@ function checkMatches() {
 
   vibrate(correct === total ? [50, 50, 50] : [100]);
 
+  // Celebration confetti for good results
+  if (correct > total / 2) {
+    for (let i = 0; i < (correct === total ? 6 : 3); i++) {
+      setTimeout(() => {
+        spawnConfettiAdvanced(Math.random() * window.innerWidth, Math.random() * window.innerHeight * 0.4, 10);
+      }, i * 200);
+    }
+  }
+
   const timeBonus = matchState.timeLeft * 2;
   const accuracyScore = Math.round((correct / total) * 300);
   matchState.score = accuracyScore + timeBonus;
@@ -622,6 +709,10 @@ function placeOnBody(cardId, zoneCardId) {
     bodyState.placed[cardId] = zoneCardId;
     bodyState.correctCount++;
 
+    // Confetti burst from the placed organ
+    spawnConfetti(zone, 10);
+    animateScore(document.getElementById('body-score'));
+
     document.getElementById('body-score').textContent = `${bodyState.correctCount} / ${bodyState.cards.length}`;
     showToast(`${card.name} ถูกต้อง!`, 'success');
 
@@ -643,6 +734,16 @@ function placeOnBody(cardId, zoneCardId) {
 
 function finishBodyBuilder() {
   hideBodyIndicator();
+  // Big celebration confetti
+  for (let i = 0; i < 5; i++) {
+    setTimeout(() => {
+      spawnConfettiAdvanced(
+        Math.random() * window.innerWidth,
+        Math.random() * window.innerHeight * 0.5,
+        10
+      );
+    }, i * 150);
+  }
   const timeBonus = bodyState.timeLeft * 2;
   const placementScore = bodyState.correctCount * 50;
   const totalScore = placementScore + timeBonus;
@@ -780,6 +881,12 @@ function answerQuestion(index) {
       quizState.answeredCards.push(randomCard.id);
     }
 
+    // Animations
+    spawnConfetti(options[q.correct], quizState.streak >= 3 ? 16 : 8);
+    animateScore(document.getElementById('quiz-score-display'));
+    const streakEl = document.querySelector('.streak-display');
+    if (streakEl) animateStreak(streakEl);
+
     document.getElementById('quiz-streak').textContent = '🔥 ' + quizState.streak;
     showQuizFeedback(true, `+${points} คะแนน (⏱ +${timeBonus} 🔥 +${streakBonus})`, q.explanation);
   } else {
@@ -787,7 +894,10 @@ function answerQuestion(index) {
     quizState.hp = Math.max(0, quizState.hp - 20);
     quizState.streak = 0;
 
-    document.getElementById('quiz-hp-fill').style.width = quizState.hp + '%';
+    const hpFill = document.getElementById('quiz-hp-fill');
+    hpFill.style.width = quizState.hp + '%';
+    hpFill.classList.add('damage');
+    setTimeout(() => hpFill.classList.remove('damage'), 500);
     document.getElementById('quiz-hp-text').textContent = quizState.hp;
     document.getElementById('quiz-streak').textContent = '🔥 0';
     showQuizFeedback(false, 'เสีย 20 HP', q.explanation);
@@ -834,12 +944,19 @@ function nextQuestion() {
 
 function finishQuiz() {
   clearAllTimers();
+  // Celebration confetti if did well
+  const accuracy = Math.round((quizState.correctCount / quizState.questions.length) * 100);
+  if (accuracy >= 50) {
+    for (let i = 0; i < (accuracy >= 80 ? 6 : 3); i++) {
+      setTimeout(() => {
+        spawnConfettiAdvanced(Math.random() * window.innerWidth, Math.random() * window.innerHeight * 0.4, 10);
+      }, i * 200);
+    }
+  }
 
   collectCards(quizState.answeredCards);
   state.totalScore += quizState.score;
   saveState();
-
-  const accuracy = Math.round((quizState.correctCount / quizState.questions.length) * 100);
 
   showResults({
     title: accuracy >= 80 ? 'ยอดเยี่ยม!' : accuracy >= 50 ? 'ทำได้ดี!' : 'ลองอีกครั้ง!',
