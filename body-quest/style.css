@@ -29,6 +29,13 @@
   --safe-right: env(safe-area-inset-right, 0px);
 }
 
+/* Prevent double-tap zoom on all interactive elements */
+button, .btn, .game-card, .quiz-option, .body-card,
+.body-drop-zone, .match-zone, .filter-btn, .player-item,
+.lb-tab, .text-input, a {
+  touch-action: manipulation;
+}
+
 * {
   margin: 0;
   padding: 0;

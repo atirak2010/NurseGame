@@ -18,12 +18,7 @@ function vibrate(pattern) {
   try { navigator.vibrate && navigator.vibrate(pattern); } catch(e) { /* ignore */ }
 }
 
-// Prevent double-tap zoom on game elements
-document.addEventListener('touchend', (e) => {
-  if (e.target.closest('.game-card, .quiz-option, .btn, .body-card, .body-drop-zone, .match-zone, .filter-btn, .player-item, .lb-tab')) {
-    e.preventDefault();
-  }
-}, { passive: false });
+// Prevent double-tap zoom is handled via CSS touch-action: manipulation
 
 // Enter key on name input
 document.addEventListener('DOMContentLoaded', () => {
