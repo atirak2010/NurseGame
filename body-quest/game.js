@@ -1,9 +1,11 @@
 // ============================
 // Body Quest - Game Logic
+// Mobile-First (iOS & Android)
 // ============================
 
 // ---------- STATE ----------
 const state = {
+  playerName: '',
   totalScore: 0,
   collectedCards: new Set(),
   achievements: new Set(),
@@ -11,28 +13,140 @@ const state = {
   timers: {},
 };
 
-// Load saved state from localStorage
-function loadState() {
+// ---------- MOBILE HELPERS ----------
+function vibrate(pattern) {
+  try { navigator.vibrate && navigator.vibrate(pattern); } catch(e) { /* ignore */ }
+}
+
+// Prevent double-tap zoom on game elements
+document.addEventListener('touchend', (e) => {
+  if (e.target.closest('.game-card, .quiz-option, .btn, .body-card, .body-drop-zone, .match-zone, .filter-btn, .player-item, .lb-tab')) {
+    e.preventDefault();
+  }
+}, { passive: false });
+
+// Enter key on name input
+document.addEventListener('DOMContentLoaded', () => {
+  const input = document.getElementById('player-name-input');
+  if (input) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') registerPlayer();
+    });
+  }
+});
+
+// ================================
+// PLAYER & LEADERBOARD SYSTEM
+// ================================
+function getAllPlayers() {
   try {
-    const saved = localStorage.getItem('bodyquest_state');
-    if (saved) {
-      const data = JSON.parse(saved);
-      state.totalScore = data.totalScore || 0;
-      state.collectedCards = new Set(data.collectedCards || []);
-      state.achievements = new Set(data.achievements || []);
-    }
+    return JSON.parse(localStorage.getItem('bodyquest_players') || '{}');
+  } catch(e) { return {}; }
+}
+
+function saveAllPlayers(players) {
+  try {
+    localStorage.setItem('bodyquest_players', JSON.stringify(players));
   } catch(e) { /* ignore */ }
+}
+
+function registerPlayer() {
+  const input = document.getElementById('player-name-input');
+  const name = (input.value || '').trim();
+  if (!name) {
+    input.focus();
+    input.style.borderColor = 'var(--danger)';
+    setTimeout(() => input.style.borderColor = '', 1000);
+    return;
+  }
+
+  state.playerName = name;
+  localStorage.setItem('bodyquest_currentPlayer', name);
+
+  // Load this player's data or create new
+  const players = getAllPlayers();
+  if (players[name]) {
+    state.totalScore = players[name].totalScore || 0;
+    state.collectedCards = new Set(players[name].collectedCards || []);
+    state.achievements = new Set(players[name].achievements || []);
+  } else {
+    state.totalScore = 0;
+    state.collectedCards = new Set();
+    state.achievements = new Set();
+    players[name] = { totalScore: 0, collectedCards: [], achievements: [] };
+    saveAllPlayers(players);
+  }
+
+  updateHomeStats();
+  document.getElementById('player-name-display').textContent = name;
+  showScreen('home');
+  vibrate(30);
+}
+
+function loginPlayer(name) {
+  document.getElementById('player-name-input').value = name;
+  registerPlayer();
+}
+
+function renderWelcomeScreen() {
+  const players = getAllPlayers();
+  const playerNames = Object.keys(players);
+  const container = document.getElementById('welcome-players');
+  const list = document.getElementById('player-list');
+
+  if (playerNames.length === 0) {
+    container.style.display = 'none';
+    return;
+  }
+
+  container.style.display = 'block';
+
+  // Sort by score desc
+  const sorted = playerNames
+    .map(n => ({ name: n, score: players[n].totalScore || 0, cards: (players[n].collectedCards || []).length }))
+    .sort((a, b) => b.score - a.score);
+
+  list.innerHTML = sorted.map((p, i) => `
+    <div class="player-item" onclick="loginPlayer('${p.name.replace(/'/g, "\\'")}')">
+      <span class="player-item-rank">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i+1)}</span>
+      <div class="player-item-info">
+        <div class="player-item-name">${p.name}</div>
+        <div class="player-item-score">${p.score.toLocaleString()} คะแนน · ${p.cards} การ์ด</div>
+      </div>
+      <span class="player-item-arrow">→</span>
+    </div>
+  `).join('');
+}
+
+// ---------- PERSISTENCE ----------
+function loadState() {
+  const currentPlayer = localStorage.getItem('bodyquest_currentPlayer');
+  if (currentPlayer) {
+    const players = getAllPlayers();
+    if (players[currentPlayer]) {
+      state.playerName = currentPlayer;
+      state.totalScore = players[currentPlayer].totalScore || 0;
+      state.collectedCards = new Set(players[currentPlayer].collectedCards || []);
+      state.achievements = new Set(players[currentPlayer].achievements || []);
+      document.getElementById('player-name-display').textContent = currentPlayer;
+      // Skip welcome, go to home
+      document.getElementById('screen-welcome').classList.remove('active');
+      document.getElementById('screen-home').classList.add('active');
+    }
+  }
+  renderWelcomeScreen();
   updateHomeStats();
 }
 
 function saveState() {
-  try {
-    localStorage.setItem('bodyquest_state', JSON.stringify({
-      totalScore: state.totalScore,
-      collectedCards: [...state.collectedCards],
-      achievements: [...state.achievements],
-    }));
-  } catch(e) { /* ignore */ }
+  if (!state.playerName) return;
+  const players = getAllPlayers();
+  players[state.playerName] = {
+    totalScore: state.totalScore,
+    collectedCards: [...state.collectedCards],
+    achievements: [...state.achievements],
+  };
+  saveAllPlayers(players);
 }
 
 // ---------- NAVIGATION ----------
@@ -40,9 +154,61 @@ function showScreen(id) {
   clearAllTimers();
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const screen = document.getElementById('screen-' + id);
-  if (screen) screen.classList.add('active');
+  if (screen) {
+    screen.classList.add('active');
+    screen.scrollTop = 0;
+  }
   if (id === 'home') updateHomeStats();
   if (id === 'collection') renderCollection();
+  if (id === 'leaderboard') renderLeaderboard();
+  if (id === 'welcome') renderWelcomeScreen();
+}
+
+// ================================
+// LEADERBOARD
+// ================================
+let lbTab = 'total';
+
+function showLeaderboardTab(tab) {
+  lbTab = tab;
+  document.querySelectorAll('.lb-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('lb-tab-' + tab).classList.add('active');
+  renderLeaderboard();
+}
+
+function renderLeaderboard() {
+  const players = getAllPlayers();
+  const playerNames = Object.keys(players);
+  const list = document.getElementById('leaderboard-list');
+
+  if (playerNames.length === 0) {
+    list.innerHTML = '<div class="lb-empty">ยังไม่มีผู้เล่น<br>เชิญเพื่อนมาเล่นเพื่อเทียบคะแนน!</div>';
+    return;
+  }
+
+  const sorted = playerNames
+    .map(n => ({
+      name: n,
+      score: players[n].totalScore || 0,
+      cards: (players[n].collectedCards || []).length,
+    }))
+    .sort((a, b) => lbTab === 'total' ? b.score - a.score : b.cards - a.cards);
+
+  list.innerHTML = sorted.map((p, i) => {
+    const isMe = p.name === state.playerName;
+    const rankClass = i === 0 ? 'top-1' : i === 1 ? 'top-2' : i === 2 ? 'top-3' : '';
+    const rankIcon = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1);
+    const value = lbTab === 'total'
+      ? p.score.toLocaleString() + ' คะแนน'
+      : p.cards + '/' + CARDS.length + ' การ์ด';
+
+    return `
+      <div class="lb-row ${rankClass} ${isMe ? 'is-me' : ''}">
+        <span class="lb-rank">${rankIcon}</span>
+        <span class="lb-name">${p.name} ${isMe ? '(คุณ)' : ''}</span>
+        <span class="lb-value">${value}</span>
+      </div>`;
+  }).join('');
 }
 
 function updateHomeStats() {
@@ -50,7 +216,6 @@ function updateHomeStats() {
   document.getElementById('cards-collected').textContent = state.collectedCards.size;
   document.getElementById('cards-total').textContent = CARDS.length;
   const level = Math.floor(state.totalScore / 500) + 1;
-  const titles = ['นักศึกษาใหม่','นักสำรวจร่างกาย','ผู้เชี่ยวชาญเซลล์','พยาบาลฝึกหัด','พยาบาลมืออาชีพ'];
   document.getElementById('player-level').textContent = 'Lv.' + Math.min(level, 5);
 }
 
@@ -87,7 +252,8 @@ function collectCards(cardIds) {
     }
   });
   if (newCards.length > 0) {
-    showToast(`🎴 ปลดล็อคการ์ดใหม่ ${newCards.length} ใบ!`, 'achievement');
+    vibrate(50);
+    showToast(`ปลดล็อคการ์ดใหม่ ${newCards.length} ใบ!`, 'achievement');
     saveState();
   }
   return newCards;
@@ -98,15 +264,11 @@ function getSystemColor(systemId) {
   return sys ? sys.color : '#666';
 }
 
-function getSystemName(systemId) {
-  const sys = SYSTEMS.find(s => s.id === systemId);
-  return sys ? sys.name : systemId;
-}
-
 // ---------- START GAME ----------
 function startGame(mode) {
   clearAllTimers();
   state.currentGame = mode;
+  vibrate(30);
   switch(mode) {
     case 'system-match': initSystemMatch(); break;
     case 'body-builder': initBodyBuilder(); break;
@@ -115,22 +277,20 @@ function startGame(mode) {
 }
 
 // ================================
-// MODE 1: SYSTEM MATCH
+// MODE 1: SYSTEM MATCH (Tap-based)
 // ================================
 let matchState = {};
 
 function initSystemMatch() {
-  // Pick 3 random systems
   const systems = shuffle(SYSTEMS).slice(0, 3);
   const systemIds = systems.map(s => s.id);
-
-  // Get cards for those systems
   const cards = shuffle(CARDS.filter(c => systemIds.includes(c.system)));
 
   matchState = {
-    systems: systems,
-    cards: cards,
-    placements: {}, // cardId -> systemId
+    systems,
+    cards,
+    placements: {},
+    selectedCard: null,
     timeLeft: 60,
     score: 0,
     checked: false,
@@ -140,8 +300,28 @@ function initSystemMatch() {
   renderMatchCards();
   renderMatchZones();
   startMatchTimer();
+  hideMatchIndicator();
   document.getElementById('match-check-btn').style.display = 'none';
   document.getElementById('match-score').textContent = '0 คะแนน';
+}
+
+function showMatchIndicator(card) {
+  const ind = document.getElementById('match-selected-indicator');
+  document.getElementById('match-selected-name').textContent = card.icon + ' ' + card.name;
+  ind.style.display = 'flex';
+  // Add hint to zones
+  document.querySelectorAll('.match-zone').forEach(z => z.classList.add('tap-hint'));
+}
+
+function hideMatchIndicator() {
+  document.getElementById('match-selected-indicator').style.display = 'none';
+  document.querySelectorAll('.match-zone').forEach(z => z.classList.remove('tap-hint'));
+}
+
+function cancelMatchSelection() {
+  matchState.selectedCard = null;
+  document.querySelectorAll('.game-card.selected').forEach(c => c.classList.remove('selected'));
+  hideMatchIndicator();
 }
 
 function renderMatchCards() {
@@ -149,32 +329,37 @@ function renderMatchCards() {
   container.innerHTML = '';
 
   matchState.cards.forEach(card => {
-    if (matchState.placements[card.id]) return; // Already placed
+    if (matchState.placements[card.id]) return;
 
     const el = document.createElement('div');
-    el.className = 'game-card';
-    el.draggable = true;
+    el.className = 'game-card' + (matchState.selectedCard === card.id ? ' selected' : '');
     el.dataset.cardId = card.id;
     el.innerHTML = `<span class="card-icon">${card.icon}</span>
       <span class="card-name">${card.name}<br><span class="card-name-en">${card.nameEn}</span></span>`;
 
-    // Drag events
-    el.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('text/plain', card.id);
-      el.classList.add('dragging');
-    });
-    el.addEventListener('dragend', () => el.classList.remove('dragging'));
-
-    // Click-to-select (mobile fallback)
-    el.addEventListener('click', () => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
       if (matchState.checked) return;
-      document.querySelectorAll('.game-card.selected').forEach(c => c.classList.remove('selected'));
+      vibrate(15);
+
+      // Toggle selection
+      if (matchState.selectedCard === card.id) {
+        cancelMatchSelection();
+        return;
+      }
+
+      document.querySelectorAll('#match-cards .game-card.selected').forEach(c => c.classList.remove('selected'));
       el.classList.add('selected');
       matchState.selectedCard = card.id;
+      showMatchIndicator(card);
     });
 
     container.appendChild(el);
   });
+
+  // Update check button
+  const allPlaced = matchState.cards.every(c => matchState.placements[c.id]);
+  document.getElementById('match-check-btn').style.display = allPlaced ? 'block' : 'none';
 }
 
 function renderMatchZones() {
@@ -192,24 +377,14 @@ function renderMatchZones() {
       </div>
       <div class="zone-cards" id="zone-${sys.id}"></div>`;
 
-    // Drop events
-    zone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      zone.classList.add('drag-over');
-    });
-    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-    zone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      zone.classList.remove('drag-over');
-      const cardId = e.dataTransfer.getData('text/plain');
-      placeCardInZone(cardId, sys.id);
-    });
-
-    // Click to place (mobile)
-    zone.addEventListener('click', () => {
+    // Tap to place selected card
+    zone.addEventListener('click', (e) => {
+      e.stopPropagation();
       if (matchState.selectedCard && !matchState.checked) {
+        vibrate(20);
         placeCardInZone(matchState.selectedCard, sys.id);
         matchState.selectedCard = null;
+        hideMatchIndicator();
       }
     });
 
@@ -222,42 +397,25 @@ function placeCardInZone(cardId, systemId) {
   const card = CARDS.find(c => c.id === cardId);
   if (!card) return;
 
-  // Remove from any previous zone
-  Object.keys(matchState.placements).forEach(k => {
-    if (matchState.placements[k] === matchState.placements[cardId]) {
-      // Keep others
-    }
-  });
-
   matchState.placements[cardId] = systemId;
 
-  // Update zone display
-  const zoneCards = document.getElementById('zone-' + systemId);
-  // Remove if already there
-  const existing = zoneCards.querySelector(`[data-card-id="${cardId}"]`);
-  if (existing) existing.remove();
-
-  // Also remove from other zones
+  // Remove from other zones
   document.querySelectorAll('.zone-cards .game-card').forEach(el => {
     if (el.dataset.cardId === cardId) el.remove();
   });
 
+  // Add to target zone
+  const zoneCards = document.getElementById('zone-' + systemId);
   const el = document.createElement('div');
   el.className = 'game-card';
   el.dataset.cardId = cardId;
-  el.draggable = true;
   el.innerHTML = `<span class="card-icon">${card.icon}</span><span class="card-name">${card.name}</span>`;
 
-  // Allow re-dragging from zones
-  el.addEventListener('dragstart', (e) => {
-    e.dataTransfer.setData('text/plain', cardId);
-    delete matchState.placements[cardId];
-    el.remove();
-    renderMatchCards();
-  });
-
-  el.addEventListener('click', () => {
+  // Tap placed card to return it
+  el.addEventListener('click', (e) => {
+    e.stopPropagation();
     if (matchState.checked) return;
+    vibrate(15);
     delete matchState.placements[cardId];
     el.remove();
     renderMatchCards();
@@ -265,16 +423,13 @@ function placeCardInZone(cardId, systemId) {
 
   zoneCards.appendChild(el);
   renderMatchCards();
-
-  // Show check button if all cards placed
-  const allPlaced = matchState.cards.every(c => matchState.placements[c.id]);
-  document.getElementById('match-check-btn').style.display = allPlaced ? 'block' : 'none';
 }
 
 function checkMatches() {
   if (matchState.checked) return;
   matchState.checked = true;
   clearAllTimers();
+  hideMatchIndicator();
 
   let correct = 0;
   const total = matchState.cards.length;
@@ -284,13 +439,11 @@ function checkMatches() {
     const isCorrect = placed === card.system;
     if (isCorrect) correct++;
 
-    // Highlight cards in zones
     document.querySelectorAll(`.zone-cards .game-card[data-card-id="${card.id}"]`).forEach(el => {
       el.classList.add(isCorrect ? 'correct' : 'wrong');
     });
   });
 
-  // Highlight zones
   matchState.systems.forEach(sys => {
     const zone = document.querySelector(`.match-zone[data-system-id="${sys.id}"]`);
     const zoneCards = matchState.cards.filter(c => matchState.placements[c.id] === sys.id);
@@ -300,6 +453,8 @@ function checkMatches() {
     }
   });
 
+  vibrate(correct === total ? [50, 50, 50] : [100]);
+
   const timeBonus = matchState.timeLeft * 2;
   const accuracyScore = Math.round((correct / total) * 300);
   matchState.score = accuracyScore + timeBonus;
@@ -307,24 +462,21 @@ function checkMatches() {
   document.getElementById('match-score').textContent = matchState.score + ' คะแนน';
   document.getElementById('match-check-btn').style.display = 'none';
 
-  // Collect cards
   const correctCardIds = matchState.cards.filter(c => matchState.placements[c.id] === c.system).map(c => c.id);
   collectCards(correctCardIds);
 
-  // Check achievements
   if (correct === total && !state.achievements.has('perfect_match')) {
     state.achievements.add('perfect_match');
-    showToast('🎯 รางวัล: จับคู่แม่นยำ!', 'achievement');
+    showToast('รางวัล: จับคู่แม่นยำ!', 'achievement');
   }
   if (!state.achievements.has('first_match')) {
     state.achievements.add('first_match');
-    showToast('⭐ รางวัล: เริ่มต้นดี!', 'achievement');
+    showToast('รางวัล: เริ่มต้นดี!', 'achievement');
   }
 
   state.totalScore += matchState.score;
   saveState();
 
-  // Show results after delay
   setTimeout(() => {
     showResults({
       title: correct === total ? 'สมบูรณ์แบบ!' : correct > total/2 ? 'ทำได้ดี!' : 'ลองอีกครั้ง!',
@@ -347,10 +499,8 @@ function startMatchTimer() {
   state.timers.match = setInterval(() => {
     matchState.timeLeft--;
     timerEl.textContent = '⏱ ' + matchState.timeLeft;
-
     if (matchState.timeLeft <= 10) timerEl.classList.add('danger');
     else timerEl.classList.remove('danger');
-
     if (matchState.timeLeft <= 0) {
       clearInterval(state.timers.match);
       checkMatches();
@@ -359,17 +509,16 @@ function startMatchTimer() {
 }
 
 // ================================
-// MODE 2: BODY BUILDER
+// MODE 2: BODY BUILDER (Tap-based)
 // ================================
 let bodyState = {};
 
 function initBodyBuilder() {
-  // Select subset of cards that have positions
   const cards = shuffle(CARDS.filter(c => c.position)).slice(0, 8);
 
   bodyState = {
-    cards: cards,
-    placed: {}, // cardId -> dropZoneId
+    cards,
+    placed: {},
     selectedCard: null,
     timeLeft: 90,
     correctCount: 0,
@@ -379,7 +528,27 @@ function initBodyBuilder() {
   renderBodyDropZones();
   renderBodyCards();
   startBodyTimer();
+  hideBodyIndicator();
   document.getElementById('body-score').textContent = `0 / ${cards.length}`;
+}
+
+function showBodyIndicator(card) {
+  const ind = document.getElementById('body-selected-indicator');
+  document.getElementById('body-selected-name').textContent = card.icon + ' ' + card.name;
+  ind.style.display = 'flex';
+  // Hint: pulse all unfilled drop zones
+  document.querySelectorAll('.body-drop-zone:not(.filled)').forEach(z => z.classList.add('tap-hint'));
+}
+
+function hideBodyIndicator() {
+  document.getElementById('body-selected-indicator').style.display = 'none';
+  document.querySelectorAll('.body-drop-zone').forEach(z => z.classList.remove('tap-hint'));
+}
+
+function cancelBodySelection() {
+  bodyState.selectedCard = null;
+  document.querySelectorAll('.body-card.selected').forEach(c => c.classList.remove('selected'));
+  hideBodyIndicator();
 }
 
 function renderBodyDropZones() {
@@ -393,24 +562,12 @@ function renderBodyDropZones() {
     zone.style.top = card.position.top + '%';
     zone.style.left = card.position.left + '%';
     zone.textContent = '?';
-    zone.title = 'วางอวัยวะที่นี่';
 
-    // Drop
-    zone.addEventListener('dragover', e => {
-      e.preventDefault();
-      zone.classList.add('drag-over');
-    });
-    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-    zone.addEventListener('drop', e => {
-      e.preventDefault();
-      zone.classList.remove('drag-over');
-      const cardId = e.dataTransfer.getData('text/plain');
-      placeOnBody(cardId, card.id);
-    });
-
-    // Click
-    zone.addEventListener('click', () => {
+    // Tap to place
+    zone.addEventListener('click', (e) => {
+      e.stopPropagation();
       if (bodyState.selectedCard) {
+        vibrate(20);
         placeOnBody(bodyState.selectedCard, card.id);
       }
     });
@@ -425,25 +582,30 @@ function renderBodyCards() {
 
   bodyState.cards.forEach(card => {
     const el = document.createElement('div');
-    el.className = 'body-card' + (bodyState.placed[card.id] ? ' placed' : '');
-    el.draggable = true;
+    el.className = 'body-card' + (bodyState.placed[card.id] ? ' placed' : '') +
+      (bodyState.selectedCard === card.id ? ' selected' : '');
     el.dataset.cardId = card.id;
-    el.innerHTML = `<span class="card-icon" style="font-size:24px">${card.icon}</span>
+    el.innerHTML = `<span class="card-icon" style="font-size:22px">${card.icon}</span>
       <div>
-        <div style="font-weight:600">${card.name}</div>
+        <div style="font-weight:600;font-size:14px">${card.name}</div>
         <div style="font-size:11px;color:var(--text-muted)">${card.nameEn}</div>
       </div>`;
 
-    el.addEventListener('dragstart', e => {
-      e.dataTransfer.setData('text/plain', card.id);
-    });
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (bodyState.placed[card.id]) return;
+      vibrate(15);
 
-    el.addEventListener('click', () => {
-      document.querySelectorAll('.body-card.selected').forEach(c => c.classList.remove('selected'));
-      if (!bodyState.placed[card.id]) {
-        el.classList.add('selected');
-        bodyState.selectedCard = card.id;
+      // Toggle
+      if (bodyState.selectedCard === card.id) {
+        cancelBodySelection();
+        return;
       }
+
+      document.querySelectorAll('.body-card.selected').forEach(c => c.classList.remove('selected'));
+      el.classList.add('selected');
+      bodyState.selectedCard = card.id;
+      showBodyIndicator(card);
     });
 
     panel.appendChild(el);
@@ -451,7 +613,6 @@ function renderBodyCards() {
 }
 
 function placeOnBody(cardId, zoneCardId) {
-  // zoneCardId is the correct card for this zone
   const zone = document.getElementById('body-zone-' + zoneCardId);
   const card = CARDS.find(c => c.id === cardId);
   if (!card || !zone || zone.classList.contains('filled')) return;
@@ -459,31 +620,34 @@ function placeOnBody(cardId, zoneCardId) {
   const isCorrect = cardId === zoneCardId;
 
   if (isCorrect) {
+    vibrate([30, 30, 30]);
     zone.classList.add('filled');
+    zone.classList.remove('tap-hint');
     zone.textContent = card.icon;
-    zone.title = card.name;
     bodyState.placed[cardId] = zoneCardId;
     bodyState.correctCount++;
 
     document.getElementById('body-score').textContent = `${bodyState.correctCount} / ${bodyState.cards.length}`;
-    showToast(`✅ ${card.name} ถูกต้อง!`, 'success');
+    showToast(`${card.name} ถูกต้อง!`, 'success');
 
     bodyState.selectedCard = null;
+    hideBodyIndicator();
     renderBodyCards();
 
-    // Check if all placed
     if (bodyState.correctCount === bodyState.cards.length) {
       clearAllTimers();
       setTimeout(() => finishBodyBuilder(), 500);
     }
   } else {
+    vibrate(100);
     zone.classList.add('wrong-placement');
     setTimeout(() => zone.classList.remove('wrong-placement'), 500);
-    showToast(`❌ ไม่ใช่ตำแหน่งนี้ ลองใหม่!`, 'error');
+    showToast('ไม่ใช่ตำแหน่งนี้ ลองใหม่!', 'error');
   }
 }
 
 function finishBodyBuilder() {
+  hideBodyIndicator();
   const timeBonus = bodyState.timeLeft * 2;
   const placementScore = bodyState.correctCount * 50;
   const totalScore = placementScore + timeBonus;
@@ -493,7 +657,7 @@ function finishBodyBuilder() {
 
   if (bodyState.correctCount === bodyState.cards.length && !state.achievements.has('body_master')) {
     state.achievements.add('body_master');
-    showToast('🩺 รางวัล: ผู้เชี่ยวชาญร่างกาย!', 'achievement');
+    showToast('รางวัล: ผู้เชี่ยวชาญร่างกาย!', 'achievement');
   }
 
   state.totalScore += totalScore;
@@ -519,10 +683,8 @@ function startBodyTimer() {
   state.timers.body = setInterval(() => {
     bodyState.timeLeft--;
     timerEl.textContent = '⏱ ' + bodyState.timeLeft;
-
     if (bodyState.timeLeft <= 10) timerEl.classList.add('danger');
     else timerEl.classList.remove('danger');
-
     if (bodyState.timeLeft <= 0) {
       clearInterval(state.timers.body);
       finishBodyBuilder();
@@ -539,7 +701,7 @@ function initQuiz() {
   const questions = shuffle(QUIZ_QUESTIONS).slice(0, 10);
 
   quizState = {
-    questions: questions,
+    questions,
     currentIndex: 0,
     score: 0,
     hp: 100,
@@ -569,6 +731,7 @@ function renderQuestion() {
   document.getElementById('quiz-hp-text').textContent = quizState.hp;
   document.getElementById('quiz-streak').textContent = '🔥 ' + quizState.streak;
   document.getElementById('quiz-feedback').style.display = 'none';
+  document.getElementById('quiz-card').style.display = 'block';
 
   const letters = ['ก', 'ข', 'ค', 'ง'];
   const optionsContainer = document.getElementById('quiz-options');
@@ -582,7 +745,6 @@ function renderQuestion() {
     optionsContainer.appendChild(btn);
   });
 
-  // Reset timer
   quizState.timeLeft = 15;
   document.getElementById('quiz-timer').textContent = '⏱ 15';
   document.getElementById('quiz-timer').classList.remove('danger');
@@ -595,15 +757,16 @@ function answerQuestion(index) {
   const isCorrect = index === q.correct;
   const timeTaken = 15 - quizState.timeLeft;
 
-  // Disable all options
   const options = document.querySelectorAll('.quiz-option');
   options.forEach(o => o.classList.add('disabled'));
 
-  // Highlight correct/wrong
   options[q.correct].classList.add('correct');
-  if (!isCorrect) options[index].classList.add('wrong');
+  if (!isCorrect && index >= 0 && index < options.length) {
+    options[index].classList.add('wrong');
+  }
 
   if (isCorrect) {
+    vibrate([30, 30, 30]);
     const basePoints = 30;
     const timeBonus = Math.max(0, (15 - timeTaken) * 2);
     const streakBonus = quizState.streak * 5;
@@ -616,7 +779,6 @@ function answerQuestion(index) {
 
     if (timeTaken <= 3) quizState.fastAnswers++;
 
-    // Collect card related to this system
     const systemCards = CARDS.filter(c => c.system === q.system);
     if (systemCards.length > 0) {
       const randomCard = systemCards[Math.floor(Math.random() * systemCards.length)];
@@ -626,6 +788,7 @@ function answerQuestion(index) {
     document.getElementById('quiz-streak').textContent = '🔥 ' + quizState.streak;
     showQuizFeedback(true, `+${points} คะแนน (⏱ +${timeBonus} 🔥 +${streakBonus})`, q.explanation);
   } else {
+    vibrate(100);
     quizState.hp = Math.max(0, quizState.hp - 20);
     quizState.streak = 0;
 
@@ -637,18 +800,17 @@ function answerQuestion(index) {
 
   document.getElementById('quiz-score-display').textContent = quizState.score + ' คะแนน';
 
-  // Check streak achievements
   if (quizState.streak >= 5 && !state.achievements.has('quiz_streak_5')) {
     state.achievements.add('quiz_streak_5');
-    showToast('🔥 รางวัล: ตอบรัว 5!', 'achievement');
+    showToast('รางวัล: ตอบรัว 5!', 'achievement');
   }
   if (quizState.streak >= 10 && !state.achievements.has('quiz_streak_10')) {
     state.achievements.add('quiz_streak_10');
-    showToast('💎 รางวัล: ตอบรัว 10!', 'achievement');
+    showToast('รางวัล: ตอบรัว 10!', 'achievement');
   }
   if (quizState.fastAnswers >= 5 && !state.achievements.has('speed_demon')) {
     state.achievements.add('speed_demon');
-    showToast('⚡ รางวัล: สายฟ้าแลบ!', 'achievement');
+    showToast('รางวัล: สายฟ้าแลบ!', 'achievement');
   }
 }
 
@@ -658,6 +820,9 @@ function showQuizFeedback(correct, scoreText, explanation) {
   document.getElementById('feedback-icon').textContent = correct ? '✅' : '❌';
   document.getElementById('feedback-text').innerHTML =
     `<strong>${scoreText}</strong><br><br>${explanation}`;
+
+  // Scroll feedback into view on mobile
+  setTimeout(() => fb.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
 }
 
 function nextQuestion() {
@@ -680,7 +845,6 @@ function finishQuiz() {
   saveState();
 
   const accuracy = Math.round((quizState.correctCount / quizState.questions.length) * 100);
-  const survived = quizState.hp > 0;
 
   showResults({
     title: accuracy >= 80 ? 'ยอดเยี่ยม!' : accuracy >= 50 ? 'ทำได้ดี!' : 'ลองอีกครั้ง!',
@@ -707,13 +871,10 @@ function startQuizTimer() {
   state.timers.quiz = setInterval(() => {
     quizState.timeLeft--;
     timerEl.textContent = '⏱ ' + quizState.timeLeft;
-
     if (quizState.timeLeft <= 5) timerEl.classList.add('danger');
     else timerEl.classList.remove('danger');
-
     if (quizState.timeLeft <= 0) {
       clearInterval(state.timers.quiz);
-      // Auto-wrong
       answerQuestion(-1);
     }
   }, 1000);
@@ -734,7 +895,6 @@ function showResults({ title, icon, stats, cards, funFact, replayFn }) {
     </div>
   `).join('');
 
-  // Show unlocked cards
   const cardsContainer = document.getElementById('results-cards');
   const uniqueCards = [...new Set(cards)];
   cardsContainer.innerHTML = uniqueCards.slice(0, 6).map(id => {
@@ -745,7 +905,6 @@ function showResults({ title, icon, stats, cards, funFact, replayFn }) {
     </div>` : '';
   }).join('');
 
-  // Fun fact
   if (funFact) {
     document.getElementById('results-funfact').style.display = 'block';
     document.getElementById('funfact-text').textContent = funFact;
@@ -753,7 +912,6 @@ function showResults({ title, icon, stats, cards, funFact, replayFn }) {
     document.getElementById('results-funfact').style.display = 'none';
   }
 
-  // Replay button
   const replayBtn = document.getElementById('results-replay-btn');
   replayBtn.onclick = replayFn;
 
@@ -766,7 +924,6 @@ function showResults({ title, icon, stats, cards, funFact, replayFn }) {
 let collectionFilter = 'all';
 
 function renderCollection() {
-  // Filter buttons
   const filtersContainer = document.getElementById('collection-filters');
   filtersContainer.innerHTML = `<button class="filter-btn ${collectionFilter === 'all' ? 'active' : ''}" onclick="filterCollection('all')">ทั้งหมด</button>`;
   SYSTEMS.forEach(sys => {
@@ -774,7 +931,6 @@ function renderCollection() {
       onclick="filterCollection('${sys.id}')" style="${collectionFilter === sys.id ? 'background:'+sys.color : ''}">${sys.icon} ${sys.name}</button>`;
   });
 
-  // Cards grid
   const grid = document.getElementById('collection-grid');
   const filteredCards = collectionFilter === 'all'
     ? CARDS
@@ -809,11 +965,12 @@ function filterCollection(filter) {
 }
 
 // ================================
-// CARD MODAL
+// CARD MODAL (Bottom Sheet on mobile)
 // ================================
 function showCardModal(cardId) {
   const card = CARDS.find(c => c.id === cardId);
   if (!card) return;
+  vibrate(15);
 
   const sys = SYSTEMS.find(s => s.id === card.system);
   const modal = document.getElementById('card-modal');
@@ -823,7 +980,7 @@ function showCardModal(cardId) {
     <div class="modal-card-icon">${card.icon}</div>
     <div class="modal-card-name">${card.name}</div>
     <div class="modal-card-en">${card.nameEn}</div>
-    <span class="card-system-tag" style="background:${sys.color}20;color:${sys.color};display:inline-block;margin-bottom:15px;">${sys.icon} ${sys.name}</span>
+    <span class="card-system-tag" style="background:${sys.color}20;color:${sys.color};display:inline-block;margin-bottom:12px;">${sys.icon} ${sys.name}</span>
     <span class="card-rarity" style="margin-left:10px">${'★'.repeat(card.rarity)}${'☆'.repeat(3 - card.rarity)}</span>
     <p class="modal-card-desc">${card.description}</p>
     <div class="modal-card-fact">💡 ${card.funFact}</div>
@@ -836,7 +993,6 @@ function closeModal() {
   document.getElementById('card-modal').style.display = 'none';
 }
 
-// Close modal on Escape
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeModal();
 });

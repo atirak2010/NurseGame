@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(python:*)",
-      "Bash(start index.html)"
+      "Bash(start index.html)",
+      "Bash(start \"\" \"d:\\\\tmp\\\\20260212\\\\body-quest\\\\index.html\")"
     ]
   }
 }
